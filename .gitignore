@@ -1,0 +1,20 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+
+# Backend
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/saved_models/*.pt
+backend/.env
+
+# Model files
+*.pt
+*.pth
+
+# OS
+.DS_Store
+Thumbs.db
