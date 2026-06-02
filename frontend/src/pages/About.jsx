@@ -48,13 +48,6 @@ const MODEL_CARDS = [
   },
 ]
 
-const DATASETS = [
-  { name: 'Dataset Ibrohim & Budi (2019)', size: '13.169 tweet', desc: 'Dataset hate speech Twitter berbahasa Indonesia dengan anotasi berlapis.' },
-  { name: 'Dataset Alfina et al. (2017)', size: '5.230 tweet', desc: 'Data tweet untuk deteksi ujaran kebencian berbahasa Indonesia.' },
-  { name: 'Dataset Putri et al. (2021)', size: '4.515 tweet', desc: 'Dataset cyberbullying Twitter siswa/mahasiswa Indonesia.' },
-  { name: 'Dataset NusaX-Senti', size: '3.800 tweet', desc: 'Data sentimen multi-label berbahasa Indonesia dari berbagai platform.' },
-  { name: 'Dataset Anotasi Manual', size: '2.000 tweet', desc: 'Data yang dikumpulkan dan dianotasi manual oleh tim peneliti.' },
-]
 
 const About = () => {
   return (
@@ -116,29 +109,6 @@ const About = () => {
           </div>
         </section>
 
-        {/* Dataset */}
-        <section>
-          <h2 className="text-lg font-semibold text-white mb-4">Sumber Dataset</h2>
-          <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
-            {DATASETS.map((ds, i) => (
-              <div
-                key={ds.name}
-                className={`px-6 py-4 flex items-start gap-4 ${i < DATASETS.length - 1 ? 'border-b border-slate-700' : ''}`}
-              >
-                <span className="text-slate-600 text-sm font-mono mt-0.5 w-4 shrink-0">{i + 1}</span>
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-3 mb-1">
-                    <span className="text-white text-sm font-medium">{ds.name}</span>
-                    <span className="text-indigo-400 text-xs bg-indigo-500/10 px-2 py-0.5 rounded-full">
-                      {ds.size}
-                    </span>
-                  </div>
-                  <p className="text-slate-400 text-sm">{ds.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
 
       </main>
       <Footer />

@@ -3,6 +3,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -11,16 +12,23 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
 
-from app.models.cyberbully_model import CyberbullyModel
+from app.models.cyberbully_model import CyberbullyMultiTask
 from app.config import settings
 
-MODEL_NAME = "indolem/indobertweet-base-uncased"
-MAX_LEN = 128
-BATCH_SIZE = 16
-EPOCHS = 5
+MODEL_NAME  = "indolem/indobertweet-base-uncased"
+MAX_LEN     = 128
+BATCH_SIZE  = 16
+EPOCHS      = 5
+LR          = 2e-5
+ALPHA       = 0.5
+BETA        = 0.5
+W2_WEAK     = 1.0
+W2_MODERATE = 6.5
+W2_STRONG   = 15.0
 
-HISTORY_PATH = Path("./saved_models/history.json")
-UPLOAD_PATH = Path("./data/uploaded_dataset.csv")
+HISTORY_PATH   = Path("./saved_models/history.json")
+UPLOAD_PATH    = Path("./data/uploaded_dataset.csv")
+DEFAULT_DATASET = Path(settings.DATASET_PATH)
 
 _status: dict = {"status": "idle", "progress": 0, "logs": []}
 _lock = threading.Lock()
@@ -31,149 +39,184 @@ def get_status() -> dict:
         return dict(_status)
 
 
-def _set_status(**kwargs) -> None:
+def _set(**kwargs) -> None:
     with _lock:
         _status.update(kwargs)
 
 
-class _BullyDataset(Dataset):
-    def __init__(self, texts, labels_t1, labels_t2, tkds, tokenizer):
-        self.texts = texts
-        self.labels_t1 = labels_t1
-        self.labels_t2 = labels_t2
-        self.tkds = tkds
+class _Dataset(Dataset):
+    def __init__(self, indices, texts, labels1, labels2, tkds, tokenizer):
+        self.indices   = indices
+        self.texts     = texts
+        self.labels1   = labels1
+        self.labels2   = labels2
+        self.tkds      = tkds
         self.tokenizer = tokenizer
 
     def __len__(self):
-        return len(self.texts)
+        return len(self.indices)
 
     def __getitem__(self, idx):
+        i   = self.indices[idx]
         enc = self.tokenizer(
-            self.texts[idx],
+            self.texts[i],
             max_length=MAX_LEN,
             padding="max_length",
             truncation=True,
             return_tensors="pt",
         )
         return {
-            "input_ids": enc["input_ids"].squeeze(),
-            "attention_mask": enc["attention_mask"].squeeze(),
-            "label_t1": torch.tensor(self.labels_t1[idx], dtype=torch.long),
-            "label_t2": torch.tensor(self.labels_t2[idx], dtype=torch.long),
-            "tkd": torch.tensor(self.tkds[idx], dtype=torch.float),
+            "input_ids":      enc["input_ids"].squeeze(0),
+            "attention_mask": enc["attention_mask"].squeeze(0),
+            "toxic_density":  torch.tensor([self.tkds[i]], dtype=torch.float),
+            "label_task1":    torch.tensor(self.labels1[i], dtype=torch.long),
+            "label_task2":    torch.tensor(self.labels2[i], dtype=torch.long),
         }
 
 
 def _run() -> None:
     try:
-        from app.services import preprocessor as preprocessor_svc
+        from app.services import preprocessor as prep_svc
         import app.services.model_service as model_svc
 
-        _set_status(status="training", progress=0, logs=[])
+        start_time = datetime.now()
+        _set(status="training", progress=0, logs=[])
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        df = pd.read_csv(UPLOAD_PATH)
+        # Load & preprocess dataset (pakai upload jika ada, fallback ke dataset asli)
+        dataset_path = UPLOAD_PATH if UPLOAD_PATH.exists() else DEFAULT_DATASET
+        df = pd.read_csv(dataset_path, encoding="latin1")
         texts, tkds = [], []
         for t in df["Tweet"].astype(str).tolist():
-            cleaned, tkd = preprocessor_svc.process(t)
+            cleaned, tkd = prep_svc.process(t)
             texts.append(cleaned)
             tkds.append(tkd)
+        tkds = np.array(tkds, dtype=np.float32)
 
-        labels_t1 = df["HS"].astype(int).tolist()
+        labels1 = df["HS"].astype(int).values
 
         def _severity(row):
-            if row["HS_Strong"] == 1:
-                return 2
-            if row["HS_Moderate"] == 1:
-                return 1
+            if row["HS"] == 0:           return -1
+            if row["HS_Strong"] == 1:    return 2
+            if row["HS_Moderate"] == 1:  return 1
             return 0
 
-        labels_t2 = df.apply(_severity, axis=1).tolist()
+        labels2  = df.apply(_severity, axis=1).values
+        idx_all  = np.arange(len(texts))
 
-        idx = list(range(len(texts)))
-        train_idx, val_idx = train_test_split(idx, test_size=0.1, random_state=42)
+        idx_train, idx_temp = train_test_split(
+            idx_all, test_size=0.1, random_state=42, stratify=labels1
+        )
+        idx_val, _ = train_test_split(
+            idx_temp, test_size=0.5, random_state=42, stratify=labels1[idx_temp]
+        )
 
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
-        def _make_ds(indices):
-            return _BullyDataset(
-                [texts[i] for i in indices],
-                [labels_t1[i] for i in indices],
-                [labels_t2[i] for i in indices],
-                [tkds[i] for i in indices],
-                tokenizer,
-            )
+        def _make(indices):
+            return _Dataset(indices, texts, labels1, labels2, tkds, tokenizer)
 
-        train_loader = DataLoader(_make_ds(train_idx), batch_size=BATCH_SIZE, shuffle=True)
-        val_loader = DataLoader(_make_ds(val_idx), batch_size=BATCH_SIZE)
+        train_loader = DataLoader(_make(idx_train), batch_size=BATCH_SIZE, shuffle=True)
+        val_loader   = DataLoader(_make(idx_val),   batch_size=BATCH_SIZE)
 
-        model = CyberbullyModel(MODEL_NAME).to(device)
-        optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
-        criterion = nn.CrossEntropyLoss()
+        model     = CyberbullyMultiTask(MODEL_NAME).to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.01)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+
+        n_noncb = (labels1 == 0).sum()
+        n_cb    = (labels1 == 1).sum()
+        w1 = torch.tensor(
+            [len(labels1) / (2 * n_noncb), len(labels1) / (2 * n_cb)],
+            dtype=torch.float,
+        ).to(device)
+        w2 = torch.tensor([W2_WEAK, W2_MODERATE, W2_STRONG], dtype=torch.float).to(device)
+
+        criterion1 = nn.CrossEntropyLoss(weight=w1)
+        criterion2 = nn.CrossEntropyLoss(weight=w2)
 
         logs = []
+        best_f1   = 0.0
+        best_path = Path(f"./saved_models/_best_tmp.pt")
+
         for epoch in range(EPOCHS):
             model.train()
             total_loss = 0.0
             for batch in train_loader:
-                ids = batch["input_ids"].to(device)
-                mask = batch["attention_mask"].to(device)
-                lt1 = batch["label_t1"].to(device)
-                lt2 = batch["label_t2"].to(device)
-                tkd_b = batch["tkd"].to(device)
+                ids    = batch["input_ids"].to(device)
+                mask   = batch["attention_mask"].to(device)
+                toxic  = batch["toxic_density"].to(device)   # (batch, 1)
+                lbl1   = batch["label_task1"].to(device)
+                lbl2   = batch["label_task2"].to(device)
 
                 optimizer.zero_grad()
-                l1, l2 = model(ids, mask, tkd_b)
-                loss = criterion(l1, lt1) + criterion(l2, lt2)
+                out1, out2 = model(ids, mask, toxic)
+                loss1  = criterion1(out1, lbl1)
+                mask2  = lbl2 >= 0
+                loss2  = criterion2(out2[mask2], lbl2[mask2]) if mask2.sum() > 0 else torch.tensor(0.0).to(device)
+                loss   = ALPHA * loss1 + BETA * loss2
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 total_loss += loss.item()
+            scheduler.step()
 
+            # Validation
             model.eval()
-            t1_true, t1_pred = [], []
+            v1_true, v1_pred = [], []
             with torch.no_grad():
                 for batch in val_loader:
-                    ids = batch["input_ids"].to(device)
-                    mask = batch["attention_mask"].to(device)
-                    tkd_b = batch["tkd"].to(device)
-                    l1, _ = model(ids, mask, tkd_b)
-                    t1_true.extend(batch["label_t1"].tolist())
-                    t1_pred.extend(l1.argmax(dim=-1).cpu().tolist())
+                    out1, _ = model(
+                        batch["input_ids"].to(device),
+                        batch["attention_mask"].to(device),
+                        batch["toxic_density"].to(device),
+                    )
+                    v1_true.extend(batch["label_task1"].numpy())
+                    v1_pred.extend(out1.argmax(dim=1).cpu().numpy())
 
-            val_acc = accuracy_score(t1_true, t1_pred)
-            val_f1 = f1_score(t1_true, t1_pred, average="weighted", zero_division=0)
+            val_acc = accuracy_score(v1_true, v1_pred)
+            val_f1  = f1_score(v1_true, v1_pred, average="macro", zero_division=0)
             avg_loss = total_loss / max(len(train_loader), 1)
 
             log = {"epoch": epoch + 1, "loss": round(avg_loss, 4),
                    "val_acc": round(val_acc, 4), "val_f1": round(val_f1, 4)}
             logs.append(log)
-            _set_status(progress=int((epoch + 1) / EPOCHS * 100), logs=logs)
+            _set(progress=int((epoch + 1) / EPOCHS * 100), logs=logs)
 
-        # Save model
-        version = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if val_f1 > best_f1:
+                best_f1 = val_f1
+                torch.save(model.state_dict(), str(best_path))
+
+        # Save final model
+        version    = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_path = Path(f"./saved_models/model_{version}.pt")
         model_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), str(model_path))
+        if best_path.exists():
+            best_path.rename(model_path)
+        else:
+            torch.save(model.state_dict(), str(model_path))
 
         # Update history.json
+        end_time = datetime.now()
+        duration_seconds = int((end_time - start_time).total_seconds())
         history = json.loads(HISTORY_PATH.read_text()) if HISTORY_PATH.exists() else []
-        last = logs[-1]
+        last    = logs[-1]
         history.insert(0, {
-            "version": version,
-            "date": datetime.now().isoformat(),
-            "dataset_size": len(df),
-            "t1_acc": last["val_acc"],
-            "t2_acc": last["val_acc"],
+            "version":          version,
+            "date":             end_time.isoformat(),
+            "start_time":       start_time.isoformat(),
+            "end_time":         end_time.isoformat(),
+            "duration_seconds": duration_seconds,
+            "dataset_size":     len(df),
+            "t1_acc":           last["val_acc"],
+            "t2_acc":           last["val_f1"],
         })
         HISTORY_PATH.write_text(json.dumps(history, indent=2))
 
-        # Reload active model
         model_svc.load_model(str(model_path))
-
-        _set_status(status="done", progress=100)
+        _set(status="done", progress=100)
 
     except Exception as exc:
-        _set_status(status="error", progress=0)
+        _set(status="error", progress=0)
         print(f"[trainer] ERROR: {exc}")
         raise
 
@@ -181,5 +224,4 @@ def _run() -> None:
 def start() -> None:
     if _status["status"] == "training":
         raise ValueError("Training sudah berjalan.")
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
+    threading.Thread(target=_run, daemon=True).start()

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { predict as predictApi } from '../services/api.js'
+import { addHistory } from '../utils/history.js'
 
 export const usePredict = () => {
   const [text, setText] = useState('')
@@ -14,6 +15,12 @@ export const usePredict = () => {
     try {
       const data = await predictApi(text)
       setResult(data)
+      addHistory({
+        id: Date.now().toString(),
+        text: text.trim(),
+        timestamp: new Date().toISOString(),
+        ...data,
+      })
     } catch (err) {
       setError(err.response?.data?.detail || 'Terjadi kesalahan saat memproses teks.')
     } finally {

@@ -33,7 +33,7 @@ def get_current_user(
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
         )
-        username: str | None = payload.get("sub")
+        username = payload.get("sub")
         if not username:
             raise HTTPException(status_code=401, detail="Token tidak valid.")
         return username

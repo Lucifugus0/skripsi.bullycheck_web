@@ -4,67 +4,47 @@ from transformers import AutoModel
 
 
 class AttentionLayer(nn.Module):
-    def __init__(self, hidden_size: int):
+    def __init__(self, hidden_dim: int):
         super().__init__()
-        self.attn = nn.Linear(hidden_size, 1)
+        self.attn = nn.Linear(hidden_dim, 1)
 
-    def forward(self, hidden_states):
-        # hidden_states: (batch, seq_len, hidden_size)
-        scores = self.attn(hidden_states).squeeze(-1)          # (batch, seq_len)
-        weights = torch.softmax(scores, dim=-1)                # (batch, seq_len)
-        context = (hidden_states * weights.unsqueeze(-1)).sum(dim=1)  # (batch, hidden_size)
-        return context, weights
+    def forward(self, x):
+        score  = self.attn(x).squeeze(-1)                    # (batch, seq)
+        weight = torch.softmax(score, dim=1).unsqueeze(-1)   # (batch, seq, 1)
+        return (x * weight).sum(dim=1)                       # (batch, hidden_dim)
 
 
-class CyberbullyModel(nn.Module):
-    def __init__(
-        self,
-        model_name: str = "indolem/indobertweet-base-uncased",
-        gru_hidden: int = 256,
-        dropout: float = 0.3,
-    ):
+class CyberbullyMultiTask(nn.Module):
+    def __init__(self, model_name: str = "indolem/indobertweet-base-uncased"):
         super().__init__()
-        self.bert = AutoModel.from_pretrained(model_name)
-        bert_hidden = self.bert.config.hidden_size  # 768
-
-        self.bigru = nn.GRU(
-            input_size=bert_hidden,
-            hidden_size=gru_hidden,
-            num_layers=1,
-            batch_first=True,
-            bidirectional=True,
+        self.bert   = AutoModel.from_pretrained(model_name)
+        self.bigru  = nn.GRU(
+            input_size=768, hidden_size=128,
+            num_layers=2, batch_first=True,
+            bidirectional=True, dropout=0.3,
         )
-        bigru_out = gru_hidden * 2  # 512
+        self.attn   = AttentionLayer(256)
+        self.tkd_fc = nn.Sequential(
+            nn.Linear(1, 32), nn.ReLU(), nn.Dropout(0.3)
+        )
+        self.dropout = nn.Dropout(0.3)
 
-        self.attention = AttentionLayer(bigru_out)
-        self.dropout = nn.Dropout(dropout)
-
-        combined = bigru_out + 1  # +1 for TKD scalar
-
-        self.task1_head = nn.Sequential(
-            nn.Linear(combined, 128),
-            nn.ReLU(),
-            nn.Dropout(dropout),
+        # 256 (BiGRU output) + 32 (TKD projected) = 288
+        self.task1 = nn.Sequential(
+            nn.Linear(288, 128), nn.ReLU(), nn.Dropout(0.3),
             nn.Linear(128, 2),
         )
-        self.task2_head = nn.Sequential(
-            nn.Linear(combined, 128),
-            nn.ReLU(),
-            nn.Dropout(dropout),
+        self.task2 = nn.Sequential(
+            nn.Linear(288, 128), nn.ReLU(), nn.Dropout(0.3),
             nn.Linear(128, 3),
         )
 
-    def forward(self, input_ids, attention_mask, tkd):
-        bert_out = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        sequence_output = bert_out.last_hidden_state          # (batch, seq, 768)
-
-        gru_out, _ = self.bigru(sequence_output)              # (batch, seq, 512)
-        context, _ = self.attention(gru_out)                  # (batch, 512)
-
-        tkd = tkd.unsqueeze(-1).float()                       # (batch, 1)
-        combined = torch.cat([context, tkd], dim=-1)          # (batch, 513)
-        combined = self.dropout(combined)
-
-        logits_t1 = self.task1_head(combined)                 # (batch, 2)
-        logits_t2 = self.task2_head(combined)                 # (batch, 3)
-        return logits_t1, logits_t2
+    def forward(self, input_ids, attention_mask, toxic):
+        # toxic shape: (batch, 1)
+        bert_out      = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        seq_out       = bert_out.last_hidden_state          # (batch, seq, 768)
+        gru_out, _    = self.bigru(seq_out)                 # (batch, seq, 256)
+        ctx           = self.attn(gru_out)                  # (batch, 256)
+        tkd_feat      = self.tkd_fc(toxic)                  # (batch, 32)
+        combined      = self.dropout(torch.cat([ctx, tkd_feat], dim=1))  # (batch, 288)
+        return self.task1(combined), self.task2(combined)

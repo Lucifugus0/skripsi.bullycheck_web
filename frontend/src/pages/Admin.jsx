@@ -7,6 +7,11 @@ import {
   getTrainingStatus,
   getModelHistory,
   rollback,
+  getAvailableModels,
+  setModel,
+  getModelStats,
+  saveModelStats,
+  uploadModelCM,
 } from '../services/api.js'
 
 const REQUIRED_COLS = ['Tweet', 'HS', 'HS_Weak', 'HS_Moderate', 'HS_Strong']
@@ -70,9 +75,33 @@ const Admin = () => {
   const [rollingBack, setRollingBack] = useState(null)
   const [rollbackMsg, setRollbackMsg] = useState(null)
 
+  // Model selection
+  const [availableModels, setAvailableModels] = useState(null)
+  const [switchingModel, setSwitchingModel] = useState(null)
+  const [switchMsg, setSwitchMsg] = useState(null)
+
+  // Model stats
+  const [modelStats, setModelStats] = useState(null)
+  const [statsEditOpen, setStatsEditOpen] = useState(false)
+  const [editAccuracy, setEditAccuracy] = useState('')
+  const [editMacroF1, setEditMacroF1] = useState('')
+  const [cmFile, setCmFile] = useState(null)
+  const [statsMsg, setStatsMsg] = useState(null)
+  const [statsSaving, setStatsSaving] = useState(false)
+  const cmInputRef = useRef(null)
+
   useEffect(() => {
     getModelHistory().then(setHistory).catch(() => {})
+    getAvailableModels().then(setAvailableModels).catch(() => setAvailableModels([]))
   }, [])
+
+  useEffect(() => {
+    const active = (availableModels ?? []).find((m) => m.active)
+    if (!active) return
+    setModelStats(null)
+    setStatsEditOpen(false)
+    getModelStats(active.filename).then(setModelStats).catch(() => setModelStats({}))
+  }, [availableModels])
 
   useEffect(() => {
     if (training.status !== 'training') return
@@ -165,6 +194,47 @@ const Admin = () => {
     }
   }
 
+  const handleSaveStats = async () => {
+    const active = (availableModels ?? []).find((m) => m.active)
+    if (!active) return
+    setStatsSaving(true)
+    setStatsMsg(null)
+    try {
+      const acc = editAccuracy !== '' ? parseFloat(editAccuracy) : null
+      const f1 = editMacroF1 !== '' ? parseFloat(editMacroF1) : null
+      if (acc !== null || f1 !== null) {
+        await saveModelStats(active.filename, acc, f1)
+      }
+      if (cmFile) {
+        await uploadModelCM(active.filename, cmFile)
+        setCmFile(null)
+      }
+      const updated = await getModelStats(active.filename)
+      setModelStats(updated)
+      setStatsMsg({ ok: true, text: 'Statistik berhasil disimpan.' })
+      setStatsEditOpen(false)
+    } catch (err) {
+      setStatsMsg({ ok: false, text: err.response?.data?.detail || 'Gagal menyimpan statistik.' })
+    } finally {
+      setStatsSaving(false)
+    }
+  }
+
+  const handleSetModel = async (filename) => {
+    setSwitchingModel(filename)
+    setSwitchMsg(null)
+    try {
+      await setModel(filename)
+      const models = await getAvailableModels()
+      setAvailableModels(models)
+      setSwitchMsg({ ok: true, text: `Model aktif: ${filename}` })
+    } catch (err) {
+      setSwitchMsg({ ok: false, text: err.response?.data?.detail || 'Gagal mengganti model.' })
+    } finally {
+      setSwitchingModel(null)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-900">
       {/* Navbar */}
@@ -184,6 +254,198 @@ const Admin = () => {
       </nav>
 
       <main className="max-w-6xl mx-auto px-6 py-10 space-y-8">
+
+        {/* ── Section 0: Pilih Model Aktif ── */}
+        <section className="bg-slate-800 border border-slate-700 rounded-xl p-6">
+          <SectionTitle>Pilih Model Aktif</SectionTitle>
+
+          {/* Active model highlight + statistik */}
+          {availableModels !== null && (() => {
+            const active = (availableModels ?? []).find((m) => m.active)
+            return (
+              <div className="mb-5 border border-indigo-500/40 bg-indigo-500/10 rounded-xl overflow-hidden">
+                {/* Header model aktif */}
+                <div className="flex items-center justify-between gap-3 p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
+                    <div>
+                      <p className="text-xs text-slate-400 mb-0.5">Sedang Digunakan</p>
+                      <p className="text-white font-semibold text-sm">{active ? active.label : '—'}</p>
+                      {active && <p className="text-slate-500 text-xs font-mono mt-0.5">{active.filename}</p>}
+                    </div>
+                  </div>
+                  {active && (
+                    <button
+                      onClick={() => {
+                        setStatsEditOpen((v) => !v)
+                        setStatsMsg(null)
+                        setEditAccuracy(modelStats?.accuracy != null ? String(modelStats.accuracy) : '')
+                        setEditMacroF1(modelStats?.macro_f1 != null ? String(modelStats.macro_f1) : '')
+                        setCmFile(null)
+                      }}
+                      className="text-xs px-3 py-1.5 border border-slate-600 hover:border-indigo-400 text-slate-300 hover:text-white rounded-lg transition-colors shrink-0"
+                    >
+                      {statsEditOpen ? 'Tutup' : 'Edit Statistik'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Tampilan statistik */}
+                {modelStats && (modelStats.accuracy != null || modelStats.macro_f1 != null || modelStats.cm_image) && (
+                  <div className="border-t border-indigo-500/20 px-4 py-4">
+                    <div className="flex flex-col sm:flex-row gap-4">
+                      {/* Angka */}
+                      {(modelStats.accuracy != null || modelStats.macro_f1 != null) && (
+                        <div className="flex gap-4">
+                          {modelStats.accuracy != null && (
+                            <div className="bg-slate-900/60 rounded-lg px-4 py-3 text-center min-w-[90px]">
+                              <p className="text-indigo-300 text-xl font-bold">
+                                {(modelStats.accuracy * 100).toFixed(1)}%
+                              </p>
+                              <p className="text-slate-400 text-xs mt-0.5">Akurasi</p>
+                            </div>
+                          )}
+                          {modelStats.macro_f1 != null && (
+                            <div className="bg-slate-900/60 rounded-lg px-4 py-3 text-center min-w-[90px]">
+                              <p className="text-indigo-300 text-xl font-bold">
+                                {(modelStats.macro_f1 * 100).toFixed(1)}%
+                              </p>
+                              <p className="text-slate-400 text-xs mt-0.5">Macro F1</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* Confusion matrix */}
+                      {modelStats.cm_image && (
+                        <div className="flex-1">
+                          <p className="text-slate-400 text-xs mb-2">Confusion Matrix</p>
+                          <img
+                            src={modelStats.cm_image}
+                            alt="Confusion Matrix"
+                            className="rounded-lg border border-slate-700 max-h-48 object-contain"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Form edit statistik */}
+                {statsEditOpen && active && (
+                  <div className="border-t border-indigo-500/20 px-4 py-4 bg-slate-900/40">
+                    <p className="text-slate-300 text-xs font-medium mb-3">Input Statistik Model</p>
+                    <div className="flex flex-wrap gap-3 mb-3">
+                      <div>
+                        <label className="text-slate-400 text-xs block mb-1">Akurasi (0–1)</label>
+                        <input
+                          type="number"
+                          min="0" max="1" step="0.0001"
+                          value={editAccuracy}
+                          onChange={(e) => setEditAccuracy(e.target.value)}
+                          placeholder="cth: 0.912"
+                          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 text-xs block mb-1">Macro F1 (0–1)</label>
+                        <input
+                          type="number"
+                          min="0" max="1" step="0.0001"
+                          value={editMacroF1}
+                          onChange={(e) => setEditMacroF1(e.target.value)}
+                          placeholder="cth: 0.894"
+                          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="mb-3">
+                      <label className="text-slate-400 text-xs block mb-1">Gambar Confusion Matrix (PNG/JPG)</label>
+                      <input ref={cmInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                        onChange={(e) => setCmFile(e.target.files[0] ?? null)} />
+                      <button
+                        onClick={() => cmInputRef.current?.click()}
+                        className="text-xs px-3 py-1.5 border border-slate-600 hover:border-indigo-500 text-slate-300 hover:text-white rounded-lg transition-colors"
+                      >
+                        {cmFile ? cmFile.name : 'Pilih Gambar'}
+                      </button>
+                    </div>
+                    {statsMsg && (
+                      <p className={`text-xs mb-2 ${statsMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+                        {statsMsg.text}
+                      </p>
+                    )}
+                    <button
+                      onClick={handleSaveStats}
+                      disabled={statsSaving}
+                      className="px-4 py-1.5 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 text-white rounded-lg text-xs font-medium transition-colors"
+                    >
+                      {statsSaving ? 'Menyimpan...' : 'Simpan'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+
+          {switchMsg && (
+            <p className={`text-sm mb-4 ${switchMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
+              {switchMsg.text}
+            </p>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {availableModels === null && (
+              <p className="text-slate-500 text-sm col-span-3">Memuat daftar model...</p>
+            )}
+            {availableModels !== null && availableModels.length === 0 && (
+              <p className="text-red-400 text-sm col-span-3">Gagal memuat daftar model.</p>
+            )}
+            {(availableModels ?? []).map((m) => (
+              <div
+                key={m.filename}
+                className={`border rounded-xl p-4 flex flex-col gap-3 transition-colors ${
+                  m.active
+                    ? 'border-indigo-500 bg-indigo-500/10'
+                    : 'border-slate-700 bg-slate-900'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-white font-medium text-sm">{m.label}</p>
+                    <p className="text-slate-500 text-xs mt-0.5 font-mono">{m.filename}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    {m.retrained && (
+                      <span className="text-xs bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full">
+                        Retrain
+                      </span>
+                    )}
+                    {m.default && (
+                      <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full">
+                        Default
+                      </span>
+                    )}
+                    {m.active && (
+                      <span className="text-xs bg-green-500/20 text-green-300 px-2 py-0.5 rounded-full">
+                        Aktif
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {!m.exists ? (
+                  <p className="text-red-400 text-xs">File tidak ditemukan</p>
+                ) : (
+                  <button
+                    onClick={() => handleSetModel(m.filename)}
+                    disabled={m.active || switchingModel === m.filename}
+                    className="w-full py-1.5 rounded-lg text-xs font-medium transition-colors border border-slate-600 hover:border-indigo-500 text-slate-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {switchingModel === m.filename ? 'Memuat...' : m.active ? 'Sedang Digunakan' : 'Gunakan Model Ini'}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
 
         {/* ── Section 1: Upload Dataset ── */}
         <section className="bg-slate-800 border border-slate-700 rounded-xl p-6">
@@ -284,7 +546,7 @@ const Admin = () => {
             {/* Abusive */}
             <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
               <p className="text-white text-sm font-medium mb-1">Kamus Kata Abusif</p>
-              <p className="text-slate-400 text-xs mb-3">abusive.csv — satu kata per baris</p>
+              <p className="text-slate-400 text-xs mb-3">Ganti file abusive.csv dengan versi baru</p>
               <input
                 ref={abusiveRef}
                 type="file"
@@ -304,12 +566,36 @@ const Admin = () => {
                   {abusiveMsg.text}
                 </p>
               )}
+              {/* Format info */}
+              <div className="mt-4 border border-slate-700 rounded-lg overflow-hidden">
+                <div className="bg-slate-800 px-3 py-1.5 border-b border-slate-700">
+                  <p className="text-slate-400 text-xs font-medium">Format CSV</p>
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-800/60">
+                      <th className="px-3 py-1.5 text-left text-slate-300 font-medium">ABUSIVE</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-400">
+                    {['anjing', 'bajingan', 'goblok', '...'].map((w) => (
+                      <tr key={w} className="border-t border-slate-700/60">
+                        <td className="px-3 py-1">{w}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="px-3 py-2 bg-slate-800/40 border-t border-slate-700">
+                  <p className="text-slate-500 text-xs">• Header wajib: <span className="text-slate-300 font-mono">ABUSIVE</span></p>
+                  <p className="text-slate-500 text-xs">• Satu kata per baris, tanpa tanda baca</p>
+                </div>
+              </div>
             </div>
 
             {/* Slang */}
             <div className="bg-slate-900 border border-slate-700 rounded-xl p-4">
-              <p className="text-white text-sm font-medium mb-1">Kamus Kata Gaul</p>
-              <p className="text-slate-400 text-xs mb-3">new_kamusalay.csv — format: slang,baku</p>
+              <p className="text-white text-sm font-medium mb-1">Kamus Kata Gaul / Singkatan</p>
+              <p className="text-slate-400 text-xs mb-3">Ganti file new_kamusalay.csv dengan versi baru</p>
               <input
                 ref={slangRef}
                 type="file"
@@ -329,6 +615,32 @@ const Admin = () => {
                   {slangMsg.text}
                 </p>
               )}
+              {/* Format info */}
+              <div className="mt-4 border border-slate-700 rounded-lg overflow-hidden">
+                <div className="bg-slate-800 px-3 py-1.5 border-b border-slate-700">
+                  <p className="text-slate-400 text-xs font-medium">Format CSV</p>
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-800/60">
+                      <th className="px-3 py-1.5 text-left text-slate-300 font-medium">Slang</th>
+                      <th className="px-3 py-1.5 text-left text-slate-300 font-medium">Kata Baku</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-400">
+                    {[['gw', 'saya'], ['lo', 'kamu'], ['gak', 'tidak'], ['...', '...']].map(([s, b]) => (
+                      <tr key={s} className="border-t border-slate-700/60">
+                        <td className="px-3 py-1">{s}</td>
+                        <td className="px-3 py-1">{b}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="px-3 py-2 bg-slate-800/40 border-t border-slate-700">
+                  <p className="text-slate-500 text-xs">• <span className="text-slate-300">Tanpa header</span> — langsung isi dari baris pertama</p>
+                  <p className="text-slate-500 text-xs">• Format tiap baris: <span className="text-slate-300 font-mono">slang,kata_baku</span></p>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -409,7 +721,9 @@ const Admin = () => {
                 <thead>
                   <tr className="bg-slate-900 text-slate-400 text-xs">
                     <th className="px-4 py-3 text-left">Versi</th>
-                    <th className="px-4 py-3 text-left">Tanggal</th>
+                    <th className="px-4 py-3 text-left">Waktu Mulai</th>
+                    <th className="px-4 py-3 text-left">Waktu Selesai</th>
+                    <th className="px-4 py-3 text-left">Durasi</th>
                     <th className="px-4 py-3 text-left">Dataset</th>
                     <th className="px-4 py-3 text-left">T1 Acc</th>
                     <th className="px-4 py-3 text-left">T2 Acc</th>
@@ -417,24 +731,42 @@ const Admin = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.map((row) => (
-                    <tr key={row.version} className="border-t border-slate-700 text-slate-300 hover:bg-slate-700/30">
-                      <td className="px-4 py-3 font-mono text-indigo-400 text-xs">{row.version}</td>
-                      <td className="px-4 py-3 text-xs">{new Date(row.date).toLocaleDateString('id-ID')}</td>
-                      <td className="px-4 py-3 text-xs">{row.dataset_size?.toLocaleString()} baris</td>
-                      <td className="px-4 py-3 text-xs">{(row.t1_acc * 100)?.toFixed(1)}%</td>
-                      <td className="px-4 py-3 text-xs">{(row.t2_acc * 100)?.toFixed(1)}%</td>
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => handleRollback(row.version)}
-                          disabled={rollingBack === row.version}
-                          className="text-xs px-3 py-1 border border-slate-600 hover:border-indigo-500 text-slate-300 hover:text-white rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {rollingBack === row.version ? 'Memproses...' : 'Rollback'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {history.map((row) => {
+                    const fmtDt = (iso) => {
+                      if (!iso) return '—'
+                      const d = new Date(iso)
+                      return d.toLocaleDateString('id-ID') + ' ' + d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    }
+                    const fmtDur = (secs) => {
+                      if (secs == null) return '—'
+                      const h = Math.floor(secs / 3600)
+                      const m = Math.floor((secs % 3600) / 60)
+                      const s = secs % 60
+                      if (h > 0) return `${h}j ${m}m ${s}d`
+                      if (m > 0) return `${m}m ${s}d`
+                      return `${s}d`
+                    }
+                    return (
+                      <tr key={row.version} className="border-t border-slate-700 text-slate-300 hover:bg-slate-700/30">
+                        <td className="px-4 py-3 font-mono text-indigo-400 text-xs">{row.version}</td>
+                        <td className="px-4 py-3 text-xs whitespace-nowrap">{fmtDt(row.start_time)}</td>
+                        <td className="px-4 py-3 text-xs whitespace-nowrap">{fmtDt(row.end_time)}</td>
+                        <td className="px-4 py-3 text-xs whitespace-nowrap">{fmtDur(row.duration_seconds)}</td>
+                        <td className="px-4 py-3 text-xs">{row.dataset_size?.toLocaleString()} baris</td>
+                        <td className="px-4 py-3 text-xs">{(row.t1_acc * 100)?.toFixed(1)}%</td>
+                        <td className="px-4 py-3 text-xs">{(row.t2_acc * 100)?.toFixed(1)}%</td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => handleRollback(row.version)}
+                            disabled={rollingBack === row.version}
+                            className="text-xs px-3 py-1 border border-slate-600 hover:border-indigo-500 text-slate-300 hover:text-white rounded-lg transition-colors disabled:opacity-50"
+                          >
+                            {rollingBack === row.version ? 'Memproses...' : 'Rollback'}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

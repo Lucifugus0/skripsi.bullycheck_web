@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     MODEL_PATH: str = "./saved_models/best_model_v3_90_5_5.pt"
     ABUSIVE_PATH: str = "./data/abusive.csv"
     SLANG_PATH: str = "./data/new_kamusalay.csv"
+    DATASET_PATH: str = "./data/data.csv"
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD_HASH: str = "admin123"
 

@@ -8,6 +8,7 @@ const Navbar = () => {
         <div className="flex gap-6">
           <Link to="/about" className="text-slate-300 hover:text-white transition-colors">Tentang</Link>
           <Link to="/panduan" className="text-slate-300 hover:text-white transition-colors">Panduan</Link>
+          <Link to="/riwayat" className="text-slate-300 hover:text-white transition-colors">Riwayat</Link>
         </div>
       </div>
     </nav>

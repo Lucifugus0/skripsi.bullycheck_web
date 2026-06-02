@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import Deteksi from './pages/Deteksi.jsx'
 import About from './pages/About.jsx'
 import Panduan from './pages/Panduan.jsx'
+import Riwayat from './pages/Riwayat.jsx'
 import Login from './pages/Login.jsx'
 import Admin from './pages/Admin.jsx'
 
@@ -17,6 +18,7 @@ const App = () => {
       <Route path="/" element={<Deteksi />} />
       <Route path="/about" element={<About />} />
       <Route path="/panduan" element={<Panduan />} />
+      <Route path="/riwayat" element={<Riwayat />} />
       <Route path="/login" element={<Login />} />
       <Route path="/admin" element={
         <ProtectedRoute>
