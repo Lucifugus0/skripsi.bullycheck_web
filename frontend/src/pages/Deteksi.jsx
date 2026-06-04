@@ -17,13 +17,13 @@ const Deteksi = () => {
           <textarea
             className="w-full bg-slate-900 border border-slate-700 rounded-lg p-4 text-slate-100 placeholder-slate-500 resize-none focus:outline-none focus:border-indigo-500 transition-colors"
             rows={5}
-            maxLength={500}
+            maxLength={300}
             placeholder="Masukkan teks yang ingin dicek..."
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
           <div className="flex justify-between items-center mt-2">
-            <span className="text-slate-500 text-sm">{text.length}/500</span>
+            <span className="text-slate-500 text-sm">{text.length}/300</span>
             <div className="flex gap-3">
               {result && (
                 <button

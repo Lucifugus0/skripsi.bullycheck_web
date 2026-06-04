@@ -11,8 +11,8 @@ router = APIRouter()
 async def predict(body: PredictRequest):
     if not body.text.strip():
         raise HTTPException(status_code=400, detail="Teks tidak boleh kosong.")
-    if len(body.text) > 500:
-        raise HTTPException(status_code=400, detail="Teks maksimal 500 karakter.")
+    if len(body.text) > 300:
+        raise HTTPException(status_code=400, detail="Teks maksimal 300 karakter.")
 
     cleaned, tkd = preprocessor_svc.process(body.text)
     result = model_svc.predict(cleaned, tkd)

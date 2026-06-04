@@ -84,15 +84,20 @@ export const getModelStats = async (filename) => {
   return data
 }
 
-export const saveModelStats = async (filename, accuracy, macro_f1) => {
-  const { data } = await api.post(`/admin/model-stats/${encodeURIComponent(filename)}`, { accuracy, macro_f1 })
+export const saveModelStats = async (filename, task1Accuracy, task1MacroF1, task2Accuracy, task2MacroF1) => {
+  const { data } = await api.post(`/admin/model-stats/${encodeURIComponent(filename)}`, {
+    task1_accuracy: task1Accuracy,
+    task1_macro_f1: task1MacroF1,
+    task2_accuracy: task2Accuracy,
+    task2_macro_f1: task2MacroF1,
+  })
   return data
 }
 
-export const uploadModelCM = async (filename, file) => {
+export const uploadModelCM = async (filename, task, file) => {
   const form = new FormData()
   form.append('file', file)
-  const { data } = await api.post(`/admin/model-cm/${encodeURIComponent(filename)}`, form, {
+  const { data } = await api.post(`/admin/model-cm/${encodeURIComponent(filename)}?task=${task}`, form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
   return data

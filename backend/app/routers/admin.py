@@ -26,8 +26,10 @@ SAVED_MODELS_DIR = Path("./saved_models")
 
 
 class ModelStatsBody(BaseModel):
-    accuracy: Optional[float] = None
-    macro_f1: Optional[float] = None
+    task1_accuracy: Optional[float] = None
+    task1_macro_f1: Optional[float] = None
+    task2_accuracy: Optional[float] = None
+    task2_macro_f1: Optional[float] = None
 
 
 def _read_stats() -> dict:
@@ -196,17 +198,22 @@ async def get_model_stats(filename: str, _: AuthDep):
 async def save_model_stats(filename: str, body: ModelStatsBody, _: AuthDep):
     stats = _read_stats()
     entry = stats.get(filename, {})
-    if body.accuracy is not None:
-        entry["accuracy"] = body.accuracy
-    if body.macro_f1 is not None:
-        entry["macro_f1"] = body.macro_f1
+    for field in ("task1_accuracy", "task1_macro_f1", "task2_accuracy", "task2_macro_f1"):
+        val = getattr(body, field)
+        if val is not None:
+            entry[field] = val
     stats[filename] = entry
     _write_stats(stats)
     return {"detail": "Statistik disimpan."}
 
 
 @router.post("/model-cm/{filename}")
-async def upload_model_cm(filename: str, _: AuthDep, file: UploadFile = File(...)):
+async def upload_model_cm(
+    filename: str,
+    _: AuthDep,
+    task: int = Query(..., ge=1, le=2),
+    file: UploadFile = File(...),
+):
     content = await file.read()
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "png"
     if ext not in {"png", "jpg", "jpeg", "webp"}:
@@ -214,10 +221,10 @@ async def upload_model_cm(filename: str, _: AuthDep, file: UploadFile = File(...
     b64 = base64.b64encode(content).decode()
     stats = _read_stats()
     entry = stats.get(filename, {})
-    entry["cm_image"] = f"data:image/{ext};base64,{b64}"
+    entry[f"task{task}_cm_image"] = f"data:image/{ext};base64,{b64}"
     stats[filename] = entry
     _write_stats(stats)
-    return {"detail": "Gambar confusion matrix disimpan."}
+    return {"detail": f"Gambar confusion matrix Task {task} disimpan."}
 
 
 @router.post("/set-model/{filename}")

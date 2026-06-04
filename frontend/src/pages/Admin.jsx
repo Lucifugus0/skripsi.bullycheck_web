@@ -83,12 +83,16 @@ const Admin = () => {
   // Model stats
   const [modelStats, setModelStats] = useState(null)
   const [statsEditOpen, setStatsEditOpen] = useState(false)
-  const [editAccuracy, setEditAccuracy] = useState('')
-  const [editMacroF1, setEditMacroF1] = useState('')
-  const [cmFile, setCmFile] = useState(null)
+  const [editT1Accuracy, setEditT1Accuracy] = useState('')
+  const [editT1MacroF1, setEditT1MacroF1] = useState('')
+  const [editT2Accuracy, setEditT2Accuracy] = useState('')
+  const [editT2MacroF1, setEditT2MacroF1] = useState('')
+  const [cmFile1, setCmFile1] = useState(null)
+  const [cmFile2, setCmFile2] = useState(null)
   const [statsMsg, setStatsMsg] = useState(null)
   const [statsSaving, setStatsSaving] = useState(false)
-  const cmInputRef = useRef(null)
+  const cmInput1Ref = useRef(null)
+  const cmInput2Ref = useRef(null)
 
   useEffect(() => {
     getModelHistory().then(setHistory).catch(() => {})
@@ -200,15 +204,15 @@ const Admin = () => {
     setStatsSaving(true)
     setStatsMsg(null)
     try {
-      const acc = editAccuracy !== '' ? parseFloat(editAccuracy) : null
-      const f1 = editMacroF1 !== '' ? parseFloat(editMacroF1) : null
-      if (acc !== null || f1 !== null) {
-        await saveModelStats(active.filename, acc, f1)
+      const t1acc = editT1Accuracy !== '' ? parseFloat(editT1Accuracy) : null
+      const t1f1  = editT1MacroF1  !== '' ? parseFloat(editT1MacroF1)  : null
+      const t2acc = editT2Accuracy !== '' ? parseFloat(editT2Accuracy) : null
+      const t2f1  = editT2MacroF1  !== '' ? parseFloat(editT2MacroF1)  : null
+      if (t1acc !== null || t1f1 !== null || t2acc !== null || t2f1 !== null) {
+        await saveModelStats(active.filename, t1acc, t1f1, t2acc, t2f1)
       }
-      if (cmFile) {
-        await uploadModelCM(active.filename, cmFile)
-        setCmFile(null)
-      }
+      if (cmFile1) { await uploadModelCM(active.filename, 1, cmFile1); setCmFile1(null) }
+      if (cmFile2) { await uploadModelCM(active.filename, 2, cmFile2); setCmFile2(null) }
       const updated = await getModelStats(active.filename)
       setModelStats(updated)
       setStatsMsg({ ok: true, text: 'Statistik berhasil disimpan.' })
@@ -279,9 +283,12 @@ const Admin = () => {
                       onClick={() => {
                         setStatsEditOpen((v) => !v)
                         setStatsMsg(null)
-                        setEditAccuracy(modelStats?.accuracy != null ? String(modelStats.accuracy) : '')
-                        setEditMacroF1(modelStats?.macro_f1 != null ? String(modelStats.macro_f1) : '')
-                        setCmFile(null)
+                        setEditT1Accuracy(modelStats?.task1_accuracy != null ? String(modelStats.task1_accuracy) : '')
+                        setEditT1MacroF1(modelStats?.task1_macro_f1 != null ? String(modelStats.task1_macro_f1) : '')
+                        setEditT2Accuracy(modelStats?.task2_accuracy != null ? String(modelStats.task2_accuracy) : '')
+                        setEditT2MacroF1(modelStats?.task2_macro_f1 != null ? String(modelStats.task2_macro_f1) : '')
+                        setCmFile1(null)
+                        setCmFile2(null)
                       }}
                       className="text-xs px-3 py-1.5 border border-slate-600 hover:border-indigo-400 text-slate-300 hover:text-white rounded-lg transition-colors shrink-0"
                     >
@@ -290,93 +297,91 @@ const Admin = () => {
                   )}
                 </div>
 
-                {/* Tampilan statistik */}
-                {modelStats && (modelStats.accuracy != null || modelStats.macro_f1 != null || modelStats.cm_image) && (
-                  <div className="border-t border-indigo-500/20 px-4 py-4">
-                    <div className="flex flex-col sm:flex-row gap-4">
-                      {/* Angka */}
-                      {(modelStats.accuracy != null || modelStats.macro_f1 != null) && (
-                        <div className="flex gap-4">
-                          {modelStats.accuracy != null && (
-                            <div className="bg-slate-900/60 rounded-lg px-4 py-3 text-center min-w-[90px]">
-                              <p className="text-indigo-300 text-xl font-bold">
-                                {(modelStats.accuracy * 100).toFixed(1)}%
-                              </p>
-                              <p className="text-slate-400 text-xs mt-0.5">Akurasi</p>
-                            </div>
-                          )}
-                          {modelStats.macro_f1 != null && (
-                            <div className="bg-slate-900/60 rounded-lg px-4 py-3 text-center min-w-[90px]">
-                              <p className="text-indigo-300 text-xl font-bold">
-                                {(modelStats.macro_f1 * 100).toFixed(1)}%
-                              </p>
-                              <p className="text-slate-400 text-xs mt-0.5">Macro F1</p>
+                {/* Tampilan statistik — 2 task */}
+                {modelStats && (modelStats.task1_accuracy != null || modelStats.task1_macro_f1 != null || modelStats.task1_cm_image || modelStats.task2_accuracy != null || modelStats.task2_macro_f1 != null || modelStats.task2_cm_image) && (
+                  <div className="border-t border-indigo-500/20 px-4 py-4 space-y-4">
+                    {[
+                      { key: 'task1', label: 'Task 1 — Deteksi CB / Non-CB' },
+                      { key: 'task2', label: 'Task 2 — Klasifikasi Severity' },
+                    ].map(({ key, label }) => {
+                      const acc = modelStats[`${key}_accuracy`]
+                      const f1  = modelStats[`${key}_macro_f1`]
+                      const cm  = modelStats[`${key}_cm_image`]
+                      if (acc == null && f1 == null && !cm) return null
+                      return (
+                        <div key={key} className="bg-slate-900/50 rounded-lg p-4">
+                          <p className="text-slate-300 text-xs font-semibold mb-3">{label}</p>
+                          <div className="flex flex-wrap gap-3 mb-3">
+                            {acc != null && (
+                              <div className="bg-slate-800 rounded-lg px-4 py-3 text-center min-w-[90px]">
+                                <p className="text-indigo-300 text-xl font-bold">{(acc * 100).toFixed(1)}%</p>
+                                <p className="text-slate-400 text-xs mt-0.5">Akurasi</p>
+                              </div>
+                            )}
+                            {f1 != null && (
+                              <div className="bg-slate-800 rounded-lg px-4 py-3 text-center min-w-[90px]">
+                                <p className="text-indigo-300 text-xl font-bold">{(f1 * 100).toFixed(1)}%</p>
+                                <p className="text-slate-400 text-xs mt-0.5">Macro F1</p>
+                              </div>
+                            )}
+                          </div>
+                          {cm && (
+                            <div>
+                              <p className="text-slate-400 text-xs mb-2">Confusion Matrix</p>
+                              <img src={cm} alt={`CM ${label}`} className="rounded-lg border border-slate-700 max-h-56 object-contain" />
                             </div>
                           )}
                         </div>
-                      )}
-                      {/* Confusion matrix */}
-                      {modelStats.cm_image && (
-                        <div className="flex-1">
-                          <p className="text-slate-400 text-xs mb-2">Confusion Matrix</p>
-                          <img
-                            src={modelStats.cm_image}
-                            alt="Confusion Matrix"
-                            className="rounded-lg border border-slate-700 max-h-48 object-contain"
-                          />
-                        </div>
-                      )}
-                    </div>
+                      )
+                    })}
                   </div>
                 )}
 
-                {/* Form edit statistik */}
+                {/* Form edit statistik — 2 task */}
                 {statsEditOpen && active && (
-                  <div className="border-t border-indigo-500/20 px-4 py-4 bg-slate-900/40">
-                    <p className="text-slate-300 text-xs font-medium mb-3">Input Statistik Model</p>
-                    <div className="flex flex-wrap gap-3 mb-3">
-                      <div>
-                        <label className="text-slate-400 text-xs block mb-1">Akurasi (0–1)</label>
-                        <input
-                          type="number"
-                          min="0" max="1" step="0.0001"
-                          value={editAccuracy}
-                          onChange={(e) => setEditAccuracy(e.target.value)}
-                          placeholder="cth: 0.912"
-                          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-indigo-500"
-                        />
+                  <div className="border-t border-indigo-500/20 px-4 py-4 bg-slate-900/40 space-y-5">
+                    {[
+                      { label: 'Task 1 — Deteksi CB / Non-CB', accVal: editT1Accuracy, setAcc: setEditT1Accuracy, f1Val: editT1MacroF1, setF1: setEditT1MacroF1, cmFile: cmFile1, setCm: setCmFile1, cmRef: cmInput1Ref, taskNum: 1 },
+                      { label: 'Task 2 — Klasifikasi Severity',  accVal: editT2Accuracy, setAcc: setEditT2Accuracy, f1Val: editT2MacroF1, setF1: setEditT2MacroF1, cmFile: cmFile2, setCm: setCmFile2, cmRef: cmInput2Ref, taskNum: 2 },
+                    ].map(({ label, accVal, setAcc, f1Val, setF1, cmFile, setCm, cmRef, taskNum }) => (
+                      <div key={taskNum}>
+                        <p className="text-slate-300 text-xs font-semibold mb-3">{label}</p>
+                        <div className="flex flex-wrap gap-3 mb-3">
+                          <div>
+                            <label className="text-slate-400 text-xs block mb-1">Akurasi (0–1)</label>
+                            <input
+                              type="number" min="0" max="1" step="0.0001"
+                              value={accVal} onChange={(e) => setAcc(e.target.value)}
+                              placeholder="cth: 0.912"
+                              className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-slate-400 text-xs block mb-1">Macro F1 (0–1)</label>
+                            <input
+                              type="number" min="0" max="1" step="0.0001"
+                              value={f1Val} onChange={(e) => setF1(e.target.value)}
+                              placeholder="cth: 0.894"
+                              className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-slate-400 text-xs block mb-1">Gambar Confusion Matrix (PNG/JPG)</label>
+                          <input ref={cmRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                            onChange={(e) => setCm(e.target.files[0] ?? null)} />
+                          <button onClick={() => cmRef.current?.click()}
+                            className="text-xs px-3 py-1.5 border border-slate-600 hover:border-indigo-500 text-slate-300 hover:text-white rounded-lg transition-colors"
+                          >
+                            {cmFile ? cmFile.name : 'Pilih Gambar'}
+                          </button>
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-slate-400 text-xs block mb-1">Macro F1 (0–1)</label>
-                        <input
-                          type="number"
-                          min="0" max="1" step="0.0001"
-                          value={editMacroF1}
-                          onChange={(e) => setEditMacroF1(e.target.value)}
-                          placeholder="cth: 0.894"
-                          className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-indigo-500"
-                        />
-                      </div>
-                    </div>
-                    <div className="mb-3">
-                      <label className="text-slate-400 text-xs block mb-1">Gambar Confusion Matrix (PNG/JPG)</label>
-                      <input ref={cmInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
-                        onChange={(e) => setCmFile(e.target.files[0] ?? null)} />
-                      <button
-                        onClick={() => cmInputRef.current?.click()}
-                        className="text-xs px-3 py-1.5 border border-slate-600 hover:border-indigo-500 text-slate-300 hover:text-white rounded-lg transition-colors"
-                      >
-                        {cmFile ? cmFile.name : 'Pilih Gambar'}
-                      </button>
-                    </div>
+                    ))}
                     {statsMsg && (
-                      <p className={`text-xs mb-2 ${statsMsg.ok ? 'text-green-400' : 'text-red-400'}`}>
-                        {statsMsg.text}
-                      </p>
+                      <p className={`text-xs ${statsMsg.ok ? 'text-green-400' : 'text-red-400'}`}>{statsMsg.text}</p>
                     )}
-                    <button
-                      onClick={handleSaveStats}
-                      disabled={statsSaving}
+                    <button onClick={handleSaveStats} disabled={statsSaving}
                       className="px-4 py-1.5 bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 text-white rounded-lg text-xs font-medium transition-colors"
                     >
                       {statsSaving ? 'Menyimpan...' : 'Simpan'}
@@ -536,6 +541,47 @@ const Admin = () => {
           >
             {uploading ? 'Mengunggah...' : training.status === 'training' ? 'Training berjalan...' : 'Retrain Model'}
           </button>
+
+          {/* Format info */}
+          <div className="mt-5 border border-slate-700 rounded-lg overflow-hidden">
+            <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-700">
+              <p className="text-slate-400 text-xs font-medium">Format CSV yang Dibutuhkan</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-slate-900/60 text-slate-300">
+                    <th className="px-3 py-2 text-left font-medium">Tweet</th>
+                    <th className="px-3 py-2 text-left font-medium">HS</th>
+                    <th className="px-3 py-2 text-left font-medium">HS_Weak</th>
+                    <th className="px-3 py-2 text-left font-medium">HS_Moderate</th>
+                    <th className="px-3 py-2 text-left font-medium">HS_Strong</th>
+                  </tr>
+                </thead>
+                <tbody className="text-slate-400">
+                  {[
+                    { tweet: 'kamu sangat menjengkelkan sekali', hs: '1', weak: '1', mod: '0', strong: '0' },
+                    { tweet: 'pergi sana, tidak ada yang suka kamu', hs: '1', weak: '0', mod: '1', strong: '0' },
+                    { tweet: 'halo selamat pagi semua!', hs: '0', weak: '0', mod: '0', strong: '0' },
+                  ].map((r, i) => (
+                    <tr key={i} className="border-t border-slate-700/60">
+                      <td className="px-3 py-1.5 max-w-[220px] truncate" title={r.tweet}>{r.tweet}</td>
+                      <td className="px-3 py-1.5">{r.hs}</td>
+                      <td className="px-3 py-1.5">{r.weak}</td>
+                      <td className="px-3 py-1.5">{r.mod}</td>
+                      <td className="px-3 py-1.5">{r.strong}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-3 py-2 bg-slate-900/40 border-t border-slate-700 space-y-0.5">
+              <p className="text-slate-500 text-xs">• <span className="text-slate-300">HS</span>: 1 = Cyberbullying, 0 = Non-Cyberbullying</p>
+              <p className="text-slate-500 text-xs">• <span className="text-slate-300">HS_Weak / HS_Moderate / HS_Strong</span>: 1 jika sesuai tingkat keparahan, selain itu 0</p>
+              <p className="text-slate-500 text-xs">• Jika HS = 0 (Non-CB), semua kolom severity diisi 0</p>
+              <p className="text-slate-500 text-xs">• Kolom tambahan di luar 5 kolom ini akan diabaikan</p>
+            </div>
+          </div>
         </section>
 
         {/* ── Section 2: Upload Kamus ── */}
